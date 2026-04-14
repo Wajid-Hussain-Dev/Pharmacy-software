@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, name, role (admin, cashier, staff), createdAt
+    //
+    // Collection: medicines
+    // Fields: name, genericName, category, batchNumber, supplierId, purchasePrice, sellingPrice, quantity, expiryDate, lowStockThreshold, updatedAt
+    //
+    // Collection: suppliers
+    // Fields: name, contact, email, address
+    //
+    // Collection: sales
+    // Fields: items (array), totalAmount, discount, tax, finalAmount, cashierId, timestamp
+    //
+    // Collection: purchases
+    // Fields: supplierId, items (array), totalAmount, timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "wajidhussain.dev@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isCashier() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier';
+    }
+
+    function isStaff() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff';
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'cashier', 'staff'];
+    }
+
+    function isValidMedicine(data) {
+      return data.keys().hasAll(['name', 'batchNumber', 'sellingPrice', 'quantity', 'expiryDate']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.sellingPrice is number && data.sellingPrice >= 0 &&
+             data.quantity is number &&
+             data.expiryDate is string;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['items', 'totalAmount', 'finalAmount', 'cashierId', 'timestamp']) &&
+             data.items is list &&
+             data.totalAmount is number &&
+             data.finalAmount is number &&
+             data.cashierId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role != 'admin' || isAdmin());
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    match /medicines/{medicineId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isCashier();
+      allow update, delete: if isAdmin();
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update, delete: if isAdmin();
+    }
+  }
+}
